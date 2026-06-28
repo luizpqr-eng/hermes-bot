@@ -1,0 +1,12 @@
+services:
+  - type: worker
+    name: hermes-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: MODEL
+        value: meta-llama/llama-3.3-70b-instruct:free
