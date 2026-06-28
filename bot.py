@@ -3,6 +3,7 @@ import logging
 import os
 from html import escape
 
+from aiohttp import web
 from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
@@ -17,6 +18,7 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = os.environ.get("MODEL", "meta-llama/llama-3.3-70b-instruct:free")
 ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "").split(",") if os.environ.get("ALLOWED_USERS") else None
+PORT = int(os.environ.get("PORT", 7860))
 
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -38,7 +40,7 @@ async def help_cmd(update: Update, _context):
 
 
 async def status(update: Update, _context):
-    await update.message.reply_text(f"✅ Bot online\nModelo: {MODEL}\nProvedor: OpenRouter")
+    await update.message.reply_text(f"Bot online\nModelo: {MODEL}\nProvedor: OpenRouter")
 
 
 async def model_cmd(update: Update, _context):
@@ -47,7 +49,7 @@ async def model_cmd(update: Update, _context):
 
 async def handle_message(update: Update, _context):
     if ALLOWED_USERS and str(update.effective_user.id) not in ALLOWED_USERS:
-        await update.message.reply_text("❌ Acesso negado.")
+        await update.message.reply_text("Acesso negado.")
         return
 
     user_text = update.message.text
@@ -76,14 +78,18 @@ async def handle_message(update: Update, _context):
 
     except Exception as e:
         logger.exception("Erro ao chamar OpenRouter")
-        await update.message.reply_text(f"❌ Erro: {escape(str(e))}")
+        await update.message.reply_text(f"Erro: {escape(str(e))}")
 
 
 async def error_handler(update: Update, context):
     logger.exception("Unhandled error: %s", context.error)
 
 
-def main():
+async def health_check(_request):
+    return web.Response(text="ok")
+
+
+async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -93,9 +99,28 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
+    web_app = web.Application()
+    web_app.router.add_get("/", health_check)
+    web_app.router.add_get("/health", health_check)
+
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    logger.info(f"Health server on port {PORT}")
+
     logger.info("Bot started, polling...")
-    app.run_polling()
+    await app.start()
+    await app.updater.start_polling()
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
